@@ -1,0 +1,101 @@
+---
+title: "P8139_final"
+author: "Ruixi Li"
+date: "2024-03-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+if (!requireNamespace("BiocManager", quietly=TRUE))
+    install.packages("BiocManager")
+BiocManager::install(c("TCGAbiolinks","EDASeq","edgeR"))
+```
+
+```{r library, echo=FALSE}
+library(TCGAbiolinks)
+library(tidyverse)
+library(DT)
+library(SummarizedExperiment)
+```
+
+```{r}
+# You can define a list of samples to query and download providing relative TCGA barcodes.
+listSamples <- c(
+    "TCGA-W5-AA2X-01A-11R-A41I-07","TCGA-W5-AA30-01A-31R-A41I-07",
+    "TCGA-W5-AA2R-11A-11R-A41I-07","TCGA-ZH-A8Y2-01A-11R-A41I-07",
+    "TCGA-W5-AA2G-01A-11R-A41I-07","TCGA-W5-AA2Z-01A-11R-A41I-07",
+    "TCGA-W5-AA31-11A-11R-A41I-07","TCGA-W5-AA2Q-11A-11R-A41I-07",
+    "TCGA-W5-AA2X-11A-11R-A41I-07","TCGA-W5-AA33-01A-11R-A41I-07"
+)
+
+# Query platform Illumina HiSeq with a list of barcode 
+query <- GDCquery(
+    project = "TCGA-CHOL", 
+    data.category = "Transcriptome Profiling",
+    data.type = "Gene Expression Quantification",
+    barcode = listSamples
+)
+
+# Download a list of barcodes with platform IlluminaHiSeq_RNASeqV2
+GDCdownload(query)
+
+# Prepare expression matrix with geneID in the rows and samples (barcode) in the columns
+# rsem.genes.results as values
+CHOL.Rnaseq.SE <- GDCprepare(query)
+
+CHOLMatrix <- assay(CHOL.Rnaseq.SE,"unstranded") 
+# For gene expression if you need to see a boxplot correlation and AAIC plot to define outliers you can run
+CHOL.RNAseq_CorOutliers <- TCGAanalyze_Preprocessing(CHOL.Rnaseq.SE)
+```
+
+
+```{r}
+library(EDASeq)
+# normalization of genes
+dataNorm <- TCGAanalyze_Normalization(
+    tabDF = CHOL.RNAseq_CorOutliers, 
+    geneInfo =  geneInfoHT
+)
+
+# quantile filter of genes
+dataFilt <- TCGAanalyze_Filtering(
+    tabDF = dataNorm,
+    method = "quantile", 
+    qnt.cut =  0.25
+)
+
+# selection of normal samples "NT"
+samplesNT <- TCGAquery_SampleTypes(
+    barcode = colnames(dataFilt),
+    typesample = c("NT")
+)
+
+# selection of tumor samples "TP"
+samplesTP <- TCGAquery_SampleTypes(
+    barcode = colnames(dataFilt), 
+    typesample = c("TP")
+)
+
+# Diff.expr.analysis (DEA)
+dataDEGs <- TCGAanalyze_DEA(
+    mat1 = dataFilt[,samplesNT],
+    mat2 = dataFilt[,samplesTP],
+    Cond1type = "Normal",
+    Cond2type = "Tumor",
+    fdr.cut = 0.01 ,
+    logFC.cut = 1,
+    method = "glmLRT"
+)
+
+# DEGs table with expression values in normal and tumor samples
+dataDEGsFiltLevel <- TCGAanalyze_LevelTab(
+    FC_FDR_table_mRNA = dataDEGs,
+    typeCond1 = "Tumor",
+    typeCond2 = "Normal",
+    TableCond1 = dataFilt[,samplesTP],
+    TableCond2 = dataFilt[,samplesNT]
+)
+```
+
+
+
