@@ -18,7 +18,7 @@ library(DT)
 library(SummarizedExperiment)
 ```
 
-```{r}
+```{r load_data}
 # You can define a list of samples to query and download providing relative TCGA barcodes.
 listSamples <- c(
     "TCGA-W5-AA2X-01A-11R-A41I-07","TCGA-W5-AA30-01A-31R-A41I-07",
@@ -49,7 +49,7 @@ CHOL.RNAseq_CorOutliers <- TCGAanalyze_Preprocessing(CHOL.Rnaseq.SE)
 ```
 
 
-```{r}
+```{r EDA}
 library(EDASeq)
 # normalization of genes
 dataNorm <- TCGAanalyze_Normalization(
@@ -98,4 +98,27 @@ dataDEGsFiltLevel <- TCGAanalyze_LevelTab(
 ```
 
 
+```{r enrichment_analysis}
+# Enrichment Analysis EA
+# Gene Ontology (GO) and Pathway enrichment by DEGs list
+Genelist <- rownames(dataDEGsFiltLevel)
+
+ansEA <- TCGAanalyze_EAcomplete(
+    TFname = "DEA genes Normal Vs Tumor",
+    RegulonList = Genelist
+)
+
+# Enrichment Analysis EA (TCGAVisualize)
+# Gene Ontology (GO) and Pathway enrichment barPlot
+
+TCGAvisualize_EAbarplot(
+    tf = rownames(ansEA$ResBP), 
+    GOBPTab = ansEA$ResBP,
+    GOCCTab = ansEA$ResCC,
+    GOMFTab = ansEA$ResMF,
+    PathTab = ansEA$ResPat,
+    nRGTab = Genelist, 
+    nBar = 10
+)
+```
 
