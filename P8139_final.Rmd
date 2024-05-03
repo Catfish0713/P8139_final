@@ -8,25 +8,26 @@ output: html_document
 ```{r setup, include=FALSE}
 if (!requireNamespace("BiocManager", quietly=TRUE))
     install.packages("BiocManager")
-BiocManager::install(c("TCGAbiolinks","EDASeq","edgeR"))
+BiocManager::install(c("TCGAbiolinks","EDASeq","edgeR","ComplexHeatmap"))
 ```
 
-```{r library, echo=FALSE}
+```{r library, message=FALSE, warning=FALSE}
 library(TCGAbiolinks)
 library(tidyverse)
 library(DT)
 library(SummarizedExperiment)
 ```
 
-```{r load_data}
+```{r data_preprocessing}
 # You can define a list of samples to query and download providing relative TCGA barcodes.
 listSamples <- c(
-    "TCGA-W5-AA2X-01A-11R-A41I-07","TCGA-W5-AA30-01A-31R-A41I-07",
-    "TCGA-W5-AA2R-11A-11R-A41I-07","TCGA-ZH-A8Y2-01A-11R-A41I-07",
+    "TCGA-W5-AA34-11A-11R-A41I-07","TCGA-W5-AA30-01A-31R-A41I-07",
+    "TCGA-W5-AA2R-11A-11R-A41I-07","TCGA-W5-AA39-01A-11R-A41I-07",
     "TCGA-W5-AA2G-01A-11R-A41I-07","TCGA-W5-AA2Z-01A-11R-A41I-07",
     "TCGA-W5-AA31-11A-11R-A41I-07","TCGA-W5-AA2Q-11A-11R-A41I-07",
     "TCGA-W5-AA2X-11A-11R-A41I-07","TCGA-W5-AA33-01A-11R-A41I-07"
 )
+
 
 # Query platform Illumina HiSeq with a list of barcode 
 query <- GDCquery(
@@ -44,7 +45,7 @@ GDCdownload(query)
 CHOL.Rnaseq.SE <- GDCprepare(query)
 
 CHOLMatrix <- assay(CHOL.Rnaseq.SE,"unstranded") 
-# For gene expression if you need to see a boxplot correlation and AAIC plot to define outliers you can run
+# A boxplot correlation and AAIC plot to define outliers 
 CHOL.RNAseq_CorOutliers <- TCGAanalyze_Preprocessing(CHOL.Rnaseq.SE)
 ```
 
@@ -82,11 +83,21 @@ dataDEGs <- TCGAanalyze_DEA(
     mat2 = dataFilt[,samplesTP],
     Cond1type = "Normal",
     Cond2type = "Tumor",
-    fdr.cut = 0.01 ,
-    logFC.cut = 1,
+    fdr.cut = 0.05,
+    logFC.cut = 2,
     method = "glmLRT"
 )
 
+
+dataDEGs_forplot <- TCGAanalyze_DEA(
+    mat1 = dataFilt[,samplesNT],
+    mat2 = dataFilt[,samplesTP],
+    Cond1type = "Normal",
+    Cond2type = "Tumor",
+    fdr.cut = 0.05,
+    logFC.cut = 2,
+    method = "glmLRT"
+)
 # DEGs table with expression values in normal and tumor samples
 dataDEGsFiltLevel <- TCGAanalyze_LevelTab(
     FC_FDR_table_mRNA = dataDEGs,
@@ -95,18 +106,52 @@ dataDEGsFiltLevel <- TCGAanalyze_LevelTab(
     TableCond1 = dataFilt[,samplesTP],
     TableCond2 = dataFilt[,samplesNT]
 )
+dataDEGsFiltLevel$threshold = ifelse(dataDEGsFiltLevel$logFC>0,"up","down")
+table(dataDEGsFiltLevel$threshold)
+library(ggplot2)
+
+# Adding classification based on thresholds
+dataDEGs_forplot = dataDEGs_forplot |> mutate(threshold = ifelse(logFC > 2 & FDR < 0.05, "Up",
+                   ifelse(logFC < -2 & FDR < 0.05, "Down", "No signif")))
+
+
+
+
+# Construct the volcano plot 
+g <- dataDEGs_forplot |> ggplot( 
+            aes(x=logFC, y =-log10(FDR), 
+                colour=threshold)) +
+  geom_point(alpha=0.4, size=1.75) +
+  xlim(c(-14, 14)) +
+  xlab("log2 fold change") + ylab("-log10 FDR") +
+  scale_color_manual(values = c("Down" = "green3", "Up" = "orange3", "No signif" = "grey")) + 
+  theme_bw() +
+  theme(legend.position="bottom") +
+  geom_vline(xintercept = c(-2,2), linetype = "dashed", color = "red") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dotted", color = "blue")
+
+
+
+# Creat the heatmap
+#library(ComplexHeatmap)
+
+
+
+
 ```
 
 
 ```{r enrichment_analysis}
+library(TCGAbiolinks)
 # Enrichment Analysis EA
 # Gene Ontology (GO) and Pathway enrichment by DEGs list
-Genelist <- rownames(dataDEGsFiltLevel)
 
+Genelist <- dataDEGs |> pull(gene_name)# extract gene_names but ENSG id
 ansEA <- TCGAanalyze_EAcomplete(
-    TFname = "DEA genes Normal Vs Tumor",
+    TFname = "regulated genes Normal Vs Tumor",
     RegulonList = Genelist
 )
+
 
 # Enrichment Analysis EA (TCGAVisualize)
 # Gene Ontology (GO) and Pathway enrichment barPlot
@@ -118,7 +163,60 @@ TCGAvisualize_EAbarplot(
     GOMFTab = ansEA$ResMF,
     PathTab = ansEA$ResPat,
     nRGTab = Genelist, 
-    nBar = 10
+    nBar = 10,
+    filename="GO.pdf"
 )
+
+
+
+#Up
+up = dataDEGs |> filter(logFC>0)
+Genelist_up <- up |> pull(gene_name)# extract gene_names but ENSG id
+ansEA_up <- TCGAanalyze_EAcomplete(
+    TFname = "Up-regulated genes Normal Vs Tumor",
+    RegulonList = Genelist_up
+)
+
+
+# Enrichment Analysis EA (TCGAVisualize)
+# Gene Ontology (GO) and Pathway enrichment barPlot
+
+TCGAvisualize_EAbarplot(
+    tf = rownames(ansEA_up$ResBP), 
+    GOBPTab = ansEA_up$ResBP,
+    GOCCTab = ansEA_up$ResCC,
+    GOMFTab = ansEA_up$ResMF,
+    PathTab = ansEA_up$ResPat,
+    nRGTab = Genelist_up, 
+    nBar = 10,
+    filename="GO_up.pdf"
+)
+
+
+#Down
+down = dataDEGs |> filter(logFC<0)
+Genelist_down <- down |> pull(gene_name)# extract gene_names but ENSG id
+ansEA_down <- TCGAanalyze_EAcomplete(
+    TFname = "Down-regulated genes Normal Vs Tumor",
+    RegulonList = Genelist_down
+)
+
+
+# Enrichment Analysis EA (TCGAVisualize)
+# Gene Ontology (GO) and Pathway enrichment barPlot
+
+TCGAvisualize_EAbarplot(
+    tf = rownames(ansEA_down$ResBP), 
+    GOBPTab = ansEA_down$ResBP,
+    GOCCTab = ansEA_down$ResCC,
+    GOMFTab = ansEA_down$ResMF,
+    PathTab = ansEA_down$ResPat,
+    nRGTab = Genelist_down, 
+    nBar = 10,
+    filename="GO_down.pdf"
+)
+
 ```
+
+The figure shows canonical pathways significantly overrepresented (enriched) by the DEGs (differentially expressed genes). The most statistically significant canonical pathways identified in DEGs list are listed according to their p value corrected FDR (-Log) (colored bars) and the ratio of list genes found in each pathway over the total number of genes in that pathway (Ratio, red line).
 
